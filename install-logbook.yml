@@ -1,0 +1,254 @@
+- name: Configure a server for Laravel
+  hosts: webserver
+  become: yes
+  vars_prompt:
+    - name: domain_name
+      prompt: 'Silahkan masukkan nama Domain'
+      private: no
+    - name: github_name
+      prompt: 'Masukkan repo github untuk di clone'
+      private: no
+    - name: token
+      prompt: 'Please Input your Token'
+      private: no
+    - name: db_name
+      prompt: 'Please insert db name'
+      private: no
+
+  tasks:
+    - name: Check if domain name is provided
+      fail:
+        msg: 'Tidak menginput nama Domain'
+      when: domain_name == ''
+
+    - name: Display the domain name
+      debug:
+        msg: 'Nama Domain anda adalah {{ domain_name }}'
+
+    - name: Create domain directory
+      file:
+        path: '/var/www/{{ domain_name }}/'
+        state: directory
+        owner: root
+        group: root
+        mode: '0755'
+
+    - name: Update and upgrade packages
+      apt:
+        update_cache: yes
+        upgrade: dist
+
+    - name: Install required packages
+      apt:
+        name:
+          - curl
+          - pwgen
+          - git
+          - vim
+          - zip
+          - unzip
+          - software-properties-common
+          - nginx
+          - mysql-server
+          - python3-certbot-dns-cloudflare
+        state: present
+
+    - name: Add PHP repository
+      apt_repository:
+        repo: ppa:ondrej/php
+        state: present
+
+    - name: Install PHP 7.4 and extensions
+      apt:
+        name:
+          - php7.4-fpm
+          - php7.4-gd
+          - php7.4-mbstring
+          - php7.4-iconv
+          - php7.4-dom
+          - php7.4-xml
+          - php7.4-zip
+          - php7.4-intl
+          - php7.4-mysql
+          - php7.4-mongodb
+          - php7.4-pdo
+          - php7.4-curl
+          - php7.4-xmlrpc
+          - php7.4-soap
+        state: present
+
+    - name: Download and install Composer
+      get_url:
+        url: https://getcomposer.org/installer
+        dest: /tmp/composer-setup.php
+      register: composer_download
+
+    - name: Run Composer installer
+      command: php /tmp/composer-setup.php --install-dir=/usr/local/bin --filename=composer --version=2.4.1
+
+    - name: Clone GitHub repository
+      git:
+        repo: '{{ github_name }}'
+        dest: '/var/www/{{ domain_name }}/'
+
+    - name: Create MySQL database
+      mysql_db:
+        name: '{{ db_name }}'
+        state: present
+
+    - name: Create MySQL user
+      mysql_user:
+        name: noc
+        password: star_net2016
+        priv: '*.*:ALL'
+        host: localhost
+        state: present
+
+    - name: Import database
+      mysql_db:
+        name: '{{ db_name }}'
+        state: import
+        target: '/var/www/{{ domain_name }}/{{ db_name }}.sql'
+
+    - name: Configure Nginx
+      copy:
+        dest: '/etc/nginx/sites-available/{{ domain_name }}.conf'
+        content: |
+          server {
+              server_name {{ domain_name }};
+
+              add_header X-Frame-Options "SAMEORIGIN";
+              add_header X-XSS-Protection "1; mode=block";
+              add_header X-Content-Type-Options "nosniff";
+              root /var/www/{{ domain_name }}/public;
+
+              index index.php index.html index.htm index.nginx-debian.html;
+
+              access_log /var/log/nginx/{{ domain_name }}.access.log;
+              error_log /var/log/nginx/{{ domain_name }}.error.log error;
+
+              location / {
+                  try_files $uri $uri/ /index.php?$args;
+              }
+
+              location ~ \.php$ {
+                  include snippets/fastcgi-php.conf;
+                  fastcgi_pass unix:/run/php/php7.4-fpm.sock;
+                  fastcgi_param SCRIPT_FILENAME $document_root$fastcgi_script_name;
+              }
+
+              location ~ /\.ht {
+                  deny all;
+              }
+
+              listen 443 ssl; # managed by Certbot
+              ssl_certificate /etc/letsencrypt/live/{{ domain_name }}/fullchain.pem; # managed by Certbot
+              ssl_certificate_key /etc/letsencrypt/live/{{ domain_name }}/privkey.pem; # managed by Certbot
+              include /etc/letsencrypt/options-ssl-nginx.conf; # managed by Certbot
+              ssl_dhparam /etc/letsencrypt/ssl-dhparams.pem; # managed by Certbot
+          }
+          server {
+              if ($host = {{ domain_name }}) {
+                  return 301 https://$host$request_uri;
+              } # managed by Certbot
+
+              listen 80;
+              server_name {{ domain_name }};
+              return 404; # managed by Certbot
+          }
+
+    - name: Enable Nginx configuration
+      file:
+        src: '/etc/nginx/sites-available/{{ domain_name }}.conf'
+        dest: '/etc/nginx/sites-enabled/{{ domain_name }}.conf'
+        state: link
+
+    - name: Restart Nginx service
+      service:
+        name: nginx
+        state: restarted
+
+    - name: Configure Certbot
+      copy:
+        dest: '/etc/letsencrypt/cloudflare.ini'
+        content: |
+          dns_cloudflare_api_token={{ token }}
+
+    - name: Run Certbot
+      command: certbot certonly --dns-cloudflare --dns-cloudflare-credentials /etc/letsencrypt/cloudflare.ini -d {{ domain_name }}
+
+    - name: Configure Laravel environment file
+      copy:
+        dest: '/var/www/{{ domain_name }}/.env'
+        content: |
+          APP_NAME=Laravel
+          APP_ENV=local
+          APP_KEY=base64:62CdnfJh7ueuZzu6rHWpDCpk91uNEU5adTmuJjKnDcA=
+          APP_DEBUG=true
+          APP_URL=https://{{ domain_name }}
+
+          LOG_CHANNEL=stack
+
+          DB_CONNECTION=mysql
+          DB_HOST=127.0.0.1
+          DB_PORT=3306
+          DB_DATABASE={{ db_name }}
+          DB_USERNAME=noc
+          DB_PASSWORD=star_net2016
+
+          BROADCAST_DRIVER=log
+          CACHE_DRIVER=file
+          QUEUE_CONNECTION=sync
+          SESSION_DRIVER=file
+          SESSION_LIFETIME=120
+
+          REDIS_HOST=127.0.0.1
+          REDIS_PASSWORD=null
+          REDIS_PORT=6379
+
+          MAIL_MAILER=smtp
+          MAIL_HOST=smtp.mailtrap.io
+          MAIL_PORT=2525
+          MAIL_USERNAME=null
+          MAIL_PASSWORD=null
+          MAIL_ENCRYPTION=null
+          MAIL_FROM_ADDRESS=null
+          MAIL_FROM_NAME="${APP_NAME}"
+
+          AWS_ACCESS_KEY_ID=
+          AWS_SECRET_ACCESS_KEY=
+          AWS_DEFAULT_REGION=us-east-1
+          AWS_BUCKET=
+
+          PUSHER_APP_ID=
+          PUSHER_APP_KEY=
+          PUSHER_APP_SECRET=
+          PUSHER_APP_CLUSTER=mt1
+
+          MIX_PUSHER_APP_KEY="${PUSHER_APP_KEY}"
+          MIX_PUSHER_APP_CLUSTER="${PUSHER_APP_CLUSTER}"
+
+    - name: Run Composer and Laravel commands
+      command: |
+        composer install && \
+        php artisan key:generate && \
+        php artisan cache:clear && \
+        composer dump-autoload
+      args:
+        chdir: '/var/www/{{ domain_name }}'
+
+    - name: Set permissions for Laravel
+      file:
+        path: '/var/www/{{ domain_name }}/storage'
+        state: directory
+        owner: www-data
+        group: www-data
+        mode: '0775'
+
+    - name: Set permissions for Laravel bootstrap cache
+      file:
+        path: '/var/www/{{ domain_name }}/bootstrap/cache'
+        state: directory
+        owner: www-data
+        group: www-data
+        mode: '0755'
