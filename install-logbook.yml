@@ -101,13 +101,59 @@
         repo: '{{ github_name }}'
         dest: '/var/www/{{ domain_name }}/'
 
+    - name: create /root/.my.cnf with password credentials
+      blockinfile:
+        path: /root/.my.cnf
+        block: |
+          [client]
+          user=root
+          password=root
+
+          [mysql]
+          user=root
+          password=root
+
+          [mysqldump]
+          user=root
+          password=root
+
+          [mysqldiff]
+          user=root
+          password=root
+        create: yes
+
+    # - name: Create a new database with name 'test'
+    #   mysql_db:
+    #     login_user: root
+    #     login_password: root
+    #     login_unix_socket: /run/mysqld/mysqld.sock
+    #     name: test
+    #     state: present
+
+    # - name: Create database user with name 'test' and password 'Test@1123' with all database privileges
+    #   mysql_user:
+    #     login_user: root
+    #     login_password: root
+    #     login_unix_socket: /run/mysqld/mysqld.sock
+    #     name: noc
+    #     password: star_net2016
+    #     priv: '*.*:ALL'
+    #     host: localhost
+    #     state: present
+
     - name: Create MySQL database
       mysql_db:
+        login_user: root
+        login_password: root
+        login_unix_socket: /run/mysqld/mysqld.sock
         name: '{{ db_name }}'
         state: present
 
     - name: Create MySQL user
       mysql_user:
+        login_user: root
+        login_password: root
+        login_unix_socket: /run/mysqld/mysqld.sock
         name: noc
         password: star_net2016
         priv: '*.*:ALL'
@@ -116,9 +162,21 @@
 
     - name: Import database
       mysql_db:
+        login_user: root
+        login_password: root
+        login_unix_socket: /run/mysqld/mysqld.sock
         name: '{{ db_name }}'
         state: import
         target: '/var/www/{{ domain_name }}/{{ db_name }}.sql'
+
+    - name: Configure Certbot
+      copy:
+        dest: '/etc/letsencrypt/cloudflare.ini'
+        content: |
+          dns_cloudflare_api_token={{ token }}
+
+    - name: Run Certbot
+      command: certbot certonly --dns-cloudflare --dns-cloudflare-credentials /etc/letsencrypt/cloudflare.ini -d {{ domain_name }}
 
     - name: Configure Nginx
       copy:
@@ -178,15 +236,6 @@
         name: nginx
         state: restarted
 
-    - name: Configure Certbot
-      copy:
-        dest: '/etc/letsencrypt/cloudflare.ini'
-        content: |
-          dns_cloudflare_api_token={{ token }}
-
-    - name: Run Certbot
-      command: certbot certonly --dns-cloudflare --dns-cloudflare-credentials /etc/letsencrypt/cloudflare.ini -d {{ domain_name }}
-
     - name: Configure Laravel environment file
       copy:
         dest: '/var/www/{{ domain_name }}/.env'
@@ -238,12 +287,20 @@
           MIX_PUSHER_APP_KEY="${PUSHER_APP_KEY}"
           MIX_PUSHER_APP_CLUSTER="${PUSHER_APP_CLUSTER}"
 
-    - name: Run Composer and Laravel commands
-      command: |
-        composer install && \
-        php artisan key:generate && \
-        php artisan cache:clear && \
-        composer dump-autoload
+    - name: Run Composer install
+      become: yes
+      command: composer install --no-interaction --optimize-autoloader
+      args:
+        chdir: '/var/www/{{ domain_name }}'
+
+    - name: Run Composer Dump
+      become: yes
+      command: composer dump-autoload --no-interaction --optimize
+      args:
+        chdir: '/var/www/{{ domain_name }}'
+
+    - name: Run PHP artisan keygen and Clear cache
+      shell: php artisan key:generate && php artisan cache:clear
       args:
         chdir: '/var/www/{{ domain_name }}'
 
