@@ -101,26 +101,26 @@
         repo: '{{ github_name }}'
         dest: '/var/www/{{ domain_name }}/'
 
-    - name: create /root/.my.cnf with password credentials
-      blockinfile:
-        path: /root/.my.cnf
-        block: |
-          [client]
-          user=root
-          password=root
+    # - name: create /root/.my.cnf with password credentials
+    #   blockinfile:
+    #     path: /root/.my.cnf
+    #     block: |
+    #       [client]
+    #       user=root
+    #       password=root
 
-          [mysql]
-          user=root
-          password=root
+    #       [mysql]
+    #       user=root
+    #       password=root
 
-          [mysqldump]
-          user=root
-          password=root
+    #       [mysqldump]
+    #       user=root
+    #       password=root
 
-          [mysqldiff]
-          user=root
-          password=root
-        create: yes
+    #       [mysqldiff]
+    #       user=root
+    #       password=root
+    #     create: yes
 
     # - name: Create a new database with name 'test'
     #   mysql_db:
